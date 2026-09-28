@@ -1,6 +1,6 @@
 """Integration tests for owner-scoped farm organization."""
 
-from datetime import UTC, date, datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -135,10 +135,11 @@ async def test_crop_cycle_can_close_but_not_move_or_reopen() -> None:
                     crops=[CropCreate(name="Rice", stage="harvest")],
                 ),
             )
+            today = datetime.now(tz=UTC).date()
             closed = await service.close_crop_cycle(
                 FARMER_A,
                 plot.crops[0].id,
-                CropCycleClose(ended_on=date.today()),
+                CropCycleClose(ended_on=today),
             )
             renamed = await service.update_crop(
                 FARMER_A, closed.id, CropUpdate(name="Archived Rice")
@@ -152,7 +153,7 @@ async def test_crop_cycle_can_close_but_not_move_or_reopen() -> None:
     finally:
         await engine.dispose()
 
-    assert closed.cycle_ended_on == date.today()
+    assert closed.cycle_ended_on == today
     assert renamed.name == "Archived Rice"
     assert immutable.value.code == "CROP_CYCLE_CLOSED"
     assert stage_immutable.value.code == "CROP_CYCLE_CLOSED"

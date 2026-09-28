@@ -42,7 +42,7 @@ class FakeProgressionService:
                 "disease_name": "tomato early blight",
                 "confidence_label": "medium",
             },
-            "model_name": "gpt-5",
+            "model_name": "global.anthropic.claude-sonnet-4-6",
             "generated_at": "2026-08-13T00:00:00Z",
             "scope": "visible_symptom_progression_only",
         }

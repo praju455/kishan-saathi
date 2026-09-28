@@ -88,9 +88,7 @@ class DiagnosisProgressionService:
             [item.id for item in later_images],
             selection.response_language.value,
         )
-        existing = await self._repository.get_progression_by_hash(
-            farmer_id, case_id, request_hash
-        )
+        existing = await self._repository.get_progression_by_hash(farmer_id, case_id, request_hash)
         if existing is not None:
             return self._response(existing)
         selected_images = [*earlier_images, *later_images]
@@ -100,7 +98,7 @@ class DiagnosisProgressionService:
             self._settings.progression_max_total_image_bytes
         ):
             raise ApplicationError(code="PROGRESSION_IMAGES_TOO_LARGE", status_code=413)
-        # Release metadata reads before S3 and OpenAI calls. Persistence below
+        # Release metadata reads before storage and Bedrock calls. Persistence below
         # starts a new, short transaction.
         await self._repository.commit()
         earlier_payload = await self._load_images(farmer_id, earlier_images)
@@ -239,9 +237,7 @@ class DiagnosisProgressionService:
     ) -> tuple[DiagnosisAssessment, DiagnosisAssessment]:
         if selection.earlier_assessment_id is not None:
             if selection.later_assessment_id is None:
-                raise ApplicationError(
-                    code="PROGRESSION_TIMEPOINT_PAIR_REQUIRED", status_code=422
-                )
+                raise ApplicationError(code="PROGRESSION_TIMEPOINT_PAIR_REQUIRED", status_code=422)
             earlier = await self._repository.get_assessment(
                 farmer_id, case_id, selection.earlier_assessment_id
             )

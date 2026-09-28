@@ -48,7 +48,7 @@ class ObjectCleanupService:
             object_key = job.object_key
             reason = job.reason
             # Release the database transaction before remote object deletion.
-            # S3/local deletion is idempotent; the durable row remains the
+            # Cloudinary/local deletion is idempotent; the durable row remains the
             # source of retry state until a short final transaction removes it.
             await self._session.commit()
             try:

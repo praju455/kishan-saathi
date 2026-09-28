@@ -22,6 +22,7 @@ from app.integrations.memory.provider import (
     MemoryScopeType,
 )
 from app.modules.chats.models import ChatMessage, ChatSendOperation, ChatSession, ChatTurn
+from app.modules.chats.ports import PlotWeatherPort
 from app.modules.chats.repository import ChatRepository
 from app.modules.chats.schemas import (
     ChatCreate,
@@ -43,7 +44,6 @@ from app.modules.reminders.models import ReminderProposal
 from app.modules.reminders.repository import ReminderRepository
 from app.modules.reminders.schemas import ProposalResponse
 from app.modules.users.schemas import SupportedLanguage
-from app.modules.weather.tool import PlotWeatherTool
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,7 +87,7 @@ class ChatService:
         diagnoses: DiagnosisRepository,
         memory: MemoryProvider,
         llm: LLMRouter,
-        plot_weather: PlotWeatherTool,
+        plot_weather: PlotWeatherPort,
         reminders: ReminderRepository,
         canonical_memory: MemoryRepository,
         memory_writer: ScopedMemoryWriter,
@@ -1051,7 +1051,7 @@ class ChatService:
             "as created. Only a result explicitly marked trained_leaf_classifier may supply a "
             "diagnosis or confidence. "
             f"{diagnosis_policy}"
-            "Do not treat any OpenAI visual observation as "
+            "Do not treat any model-generated visual observation as "
             "diagnosis, "
             "and never override or rerank classifier candidates. When plot weather materially "
             "affects guidance, call get_plot_current_weather and/or get_plot_forecast as needed; "

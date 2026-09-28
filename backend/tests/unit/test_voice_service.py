@@ -57,7 +57,7 @@ class FakeAudioProvider(AudioProvider):
         self.transcription_requests.append(request)
         return AudioTranscriptionResult(
             text="मेरे टमाटर के पत्ते पीले क्यों हैं?",
-            model="gpt-4o-mini-transcribe",
+            model="test-transcription-model",
         )
 
     async def synthesize(self, request: SpeechSynthesisRequest) -> SpeechSynthesisResult:

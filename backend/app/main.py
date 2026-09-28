@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.router import api_router, versioned_api_router
 from app.core.config import Settings, get_settings
@@ -79,9 +80,7 @@ def create_app(
         resolved_settings
     )
     resolved_audio_provider = audio_provider or build_audio_provider(resolved_settings)
-    paid_operation_rate_limiter = PaidOperationRateLimiter(
-        resolved_settings, resolved_database
-    )
+    paid_operation_rate_limiter = PaidOperationRateLimiter(resolved_settings, resolved_database)
     auth_rate_limiter = AuthRateLimiter(resolved_settings, resolved_database)
     resolved_current_weather = current_weather_provider or build_current_weather_provider(
         resolved_settings
@@ -165,6 +164,15 @@ def create_app(
     application.state.current_weather_provider = resolved_current_weather
     application.state.forecast_weather_provider = resolved_forecast_weather
     application.state.geocoding_provider = resolved_geocoding
+    if resolved_settings.cors_allowed_origins:
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=resolved_settings.cors_allowed_origins,
+            allow_credentials=False,
+            allow_methods=["DELETE", "GET", "OPTIONS", "PATCH", "POST", "PUT"],
+            allow_headers=["Authorization", "Content-Type", "Idempotency-Key"],
+            expose_headers=["Retry-After", "X-Request-ID"],
+        )
     application.middleware("http")(request_context_middleware)
     register_error_handlers(application)
     application.include_router(api_router)

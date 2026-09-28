@@ -61,7 +61,7 @@ class RecordingProgressionProvider(ProgressionProvider):
                 image_quality=ProgressionImageQuality(sufficient_for_comparison=True),
             ),
             provider_response_id="resp_test",
-            model="gpt-5",
+            model="global.anthropic.claude-sonnet-4-6",
         )
 
     async def close(self) -> None:
@@ -85,7 +85,7 @@ async def test_progression_success_uses_two_batches_without_diagnosis_labels(
     assert response.trend == "improving"
     assert response.scope == "visible_symptom_progression_only"
     assert response.earlier_captured_at < response.later_captured_at
-    assert response.model_name == "gpt-5"
+    assert response.model_name == "global.anthropic.claude-sonnet-4-6"
     assert len(context.provider.requests) == 1
     request = context.provider.requests[0]
     assert request.response_language == "hi"

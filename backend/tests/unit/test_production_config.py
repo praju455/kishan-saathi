@@ -10,16 +10,16 @@ def _production(**overrides: object) -> Settings:
         "_env_file": None,
         "app_env": "production",
         "database_url": (
-            "postgresql+asyncpg://service:password@database.example/krishisathi"
-            "?ssl=require"
+            "postgresql+asyncpg://service:password@database.example/krishisathi?ssl=require"
         ),
-        "storage_backend": "s3",
-        "s3_bucket": "private-images",
-        "s3_expected_bucket_owner": "123456789012",
-        "cognito_user_pool_id": "ap-south-1_pool",
+        "storage_backend": "cloudinary",
+        "cloudinary_cloud_name": "private-images",
+        "cloudinary_api_key": "cloudinary-key",
+        "cloudinary_api_secret": "cloudinary-secret",
+        "cognito_user_pool_id": "ap-northeast-1_pool",
         "cognito_app_client_id": "client-id",
         "auth_rate_limit_hmac_key": "a-production-secret-with-at-least-32-characters",
-        "openai_api_key": "configured-in-secret-manager",
+        "bedrock_api_key": "configured-in-secret-manager",
         "openweather_api_key": "configured-in-secret-manager",
         "mem0_api_key": "configured-in-secret-manager",
     }
@@ -39,10 +39,10 @@ def test_fully_configured_production_settings_are_accepted() -> None:
             {"auth_rate_limit_hmac_key": ""},
             "PRODUCTION_REQUIRES_AUTH_RATE_LIMIT_HMAC_KEY",
         ),
-        ({"openai_api_key": ""}, "PRODUCTION_REQUIRES_OPENAI"),
+        ({"bedrock_api_key": ""}, "PRODUCTION_REQUIRES_BEDROCK"),
         (
-            {"leaf_inference_backend": "disabled"},
-            "PRODUCTION_REQUIRES_LEAF_INFERENCE",
+            {"cloudinary_api_secret": ""},
+            "CLOUDINARY_CONFIGURATION_REQUIRED",
         ),
         ({"openweather_api_key": ""}, "PRODUCTION_REQUIRES_OPENWEATHER"),
         ({"mem0_api_key": ""}, "PRODUCTION_REQUIRES_MEM0"),

@@ -17,7 +17,7 @@ class CognitoAccountAuthProvider:
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
         self._client_id = settings.cognito_app_client_id
-        self._endpoint = f"https://cognito-idp.{settings.aws_region}.amazonaws.com/"
+        self._endpoint = f"https://cognito-idp.{settings.cognito_region}.amazonaws.com/"
         self._http = http_client or httpx.AsyncClient(
             timeout=settings.external_request_timeout_seconds
         )
@@ -77,13 +77,9 @@ class CognitoAccountAuthProvider:
             )
         except ApplicationError as exc:
             if exc.code == "AUTH_INCORRECT_CREDENTIALS":
-                raise ApplicationError(
-                    code="AUTH_SESSION_EXPIRED", status_code=401
-                ) from exc
+                raise ApplicationError(code="AUTH_SESSION_EXPIRED", status_code=401) from exc
             raise
-        return self._tokens(
-            payload.get("AuthenticationResult"), refresh_token=refresh_token
-        )
+        return self._tokens(payload.get("AuthenticationResult"), refresh_token=refresh_token)
 
     async def request_password_reset(self, email: str) -> None:
         await self._call(
@@ -92,9 +88,7 @@ class CognitoAccountAuthProvider:
             ignored_provider_codes=frozenset({"UserNotFoundException"}),
         )
 
-    async def confirm_password_reset(
-        self, email: str, code: str, new_password: str
-    ) -> None:
+    async def confirm_password_reset(self, email: str, code: str, new_password: str) -> None:
         await self._call(
             "ConfirmForgotPassword",
             {
@@ -124,9 +118,7 @@ class CognitoAccountAuthProvider:
         except httpx.TimeoutException as exc:
             raise ApplicationError(code="AUTH_PROVIDER_TIMEOUT", status_code=503) from exc
         except httpx.RequestError as exc:
-            raise ApplicationError(
-                code="AUTH_PROVIDER_UNREACHABLE", status_code=503
-            ) from exc
+            raise ApplicationError(code="AUTH_PROVIDER_UNREACHABLE", status_code=503) from exc
 
         try:
             payload = response.json() if response.content else {}

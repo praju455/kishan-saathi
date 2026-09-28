@@ -1,99 +1,90 @@
-"""Unit tests for the OpenAI Responses progression boundary."""
+"""Unit tests for the Bedrock visual-progression boundary."""
 
+import json
 from datetime import UTC, datetime
-from types import SimpleNamespace
 from typing import Any, cast
 from uuid import UUID
 
-import httpx
-import openai
 import pytest
-from openai import AsyncOpenAI
 from pydantic import ValidationError
 
 from app.core.config import Settings
 from app.core.errors import ApplicationError
-from app.integrations.progression.openai_responses import (
-    OpenAIProgressionProvider,
+from app.integrations.bedrock.client import (
+    BedrockConverseClient,
+    BedrockFailure,
+    BedrockFailureKind,
+    BedrockResponse,
 )
+from app.integrations.progression.bedrock_converse import BedrockProgressionProvider
 from app.integrations.progression.provider import (
     ProgressionAnalysis,
     ProgressionDiagnosisContext,
-    ProgressionEvidenceCode,
     ProgressionImage,
-    ProgressionImageQuality,
-    ProgressionLimitationCode,
-    ProgressionRecommendationCode,
     ProgressionRequest,
-    ProgressionTrend,
 )
 
 FARMER = UUID("00000000-0000-0000-0000-000000000001")
 
 
-class FakeResponses:
-    def __init__(self, parsed: ProgressionAnalysis | None) -> None:
-        self.parsed = parsed
-        self.kwargs: dict[str, Any] = {}
-
-    async def parse(self, **kwargs: Any) -> SimpleNamespace:
-        self.kwargs = kwargs
-        return SimpleNamespace(id="resp_test", output_parsed=self.parsed)
-
-
 class FakeClient:
-    def __init__(self, parsed: ProgressionAnalysis | None) -> None:
-        self.responses = FakeResponses(parsed)
+    def __init__(self, response: BedrockResponse | Exception) -> None:
+        self.response = response
+        self.model_id = ""
+        self.body: dict[str, Any] = {}
 
+    async def converse(self, *, model_id: str, body: dict[str, Any]) -> BedrockResponse:
+        self.model_id = model_id
+        self.body = body
+        if isinstance(self.response, Exception):
+            raise self.response
+        return self.response
 
-class FailingResponses:
-    async def parse(self, **kwargs: Any) -> SimpleNamespace:
-        del kwargs
-        raise openai.APITimeoutError(request=httpx.Request("POST", "https://api.openai.com"))
-
-
-class FailingClient:
-    def __init__(self) -> None:
-        self.responses = FailingResponses()
+    async def close(self) -> None:
+        return None
 
 
 @pytest.mark.asyncio
-async def test_provider_uses_responses_typed_output_and_data_urls() -> None:
-    parsed = ProgressionAnalysis(
-        trend=ProgressionTrend.IMPROVING,
-        confidence=0.78,
-        evidence=[ProgressionEvidenceCode.AFFECTED_AREA_REDUCED],
-        limitations=[ProgressionLimitationCode.DIFFERENT_LIGHTING],
-        recommendations=[ProgressionRecommendationCode.MONITOR_SAME_LEAF],
-        image_quality=ProgressionImageQuality(sufficient_for_comparison=True),
-    )
-    client = FakeClient(parsed)
-    provider = OpenAIProgressionProvider(
-        Settings(_env_file=None, openai_api_key="test", openai_progression_model="gpt-5"),
-        client=cast(AsyncOpenAI, client),
+async def test_provider_uses_bedrock_images_and_structured_output() -> None:
+    payload = {
+        "trend": "improving",
+        "confidence": 0.78,
+        "evidence": ["affected_area_reduced"],
+        "limitations": ["different_lighting"],
+        "recommendations": ["monitor_same_leaf"],
+        "image_quality": {
+            "sufficient_for_comparison": True,
+            "earlier_issues": [],
+            "later_issues": [],
+            "retake_guidance": [],
+        },
+    }
+    client = FakeClient(_response(payload))
+    provider = BedrockProgressionProvider(
+        Settings(_env_file=None, bedrock_api_key="test"),
+        client=cast(BedrockConverseClient, client),
     )
 
     result = await provider.compare(_request())
 
-    assert result.analysis == parsed
-    assert result.model == "gpt-5"
-    assert client.responses.kwargs["store"] is False
-    assert client.responses.kwargs["text_format"] is ProgressionAnalysis
-    assert "exact enum codes" in client.responses.kwargs["instructions"]
-    content = client.responses.kwargs["input"][0]["content"]
-    text_parts = [part["text"] for part in content if part["type"] == "input_text"]
-    assert any("TRAINED_CLASSIFIER_CONTEXT" in text for text in text_parts)
-    assert any("tomato early blight" in text for text in text_parts)
-    image_parts = [part for part in content if part["type"] == "input_image"]
+    assert result.analysis.trend.value == "improving"
+    assert result.provider_response_id == "progression-request"
+    assert client.model_id == "global.anthropic.claude-sonnet-4-6"
+    content = client.body["messages"][0]["content"]
+    image_parts = [item for item in content if "image" in item]
     assert len(image_parts) == 2
-    assert all(part["image_url"].startswith("data:image/jpeg;base64,") for part in image_parts)
+    assert all(item["image"]["source"]["bytes"] for item in image_parts)
+    text_parts = [item["text"] for item in content if "text" in item]
+    assert any("TRAINED_CLASSIFIER_CONTEXT" in text for text in text_parts)
+    assert "outputConfig" in client.body
 
 
 @pytest.mark.asyncio
-async def test_provider_rejects_refusal_or_missing_parsed_output() -> None:
-    provider = OpenAIProgressionProvider(
-        Settings(_env_file=None, openai_api_key="test"),
-        client=cast(AsyncOpenAI, FakeClient(None)),
+async def test_provider_rejects_invalid_structured_output() -> None:
+    client = FakeClient(_response({"trend": "not-an-enum"}))
+    provider = BedrockProgressionProvider(
+        Settings(_env_file=None, bedrock_api_key="test"),
+        client=cast(BedrockConverseClient, client),
     )
 
     with pytest.raises(ApplicationError) as raised:
@@ -103,10 +94,11 @@ async def test_provider_rejects_refusal_or_missing_parsed_output() -> None:
 
 
 @pytest.mark.asyncio
-async def test_provider_maps_timeout_without_leaking_provider_details() -> None:
-    provider = OpenAIProgressionProvider(
-        Settings(_env_file=None, openai_api_key="test"),
-        client=cast(AsyncOpenAI, FailingClient()),
+async def test_provider_maps_timeout_without_provider_details() -> None:
+    client = FakeClient(BedrockFailure(BedrockFailureKind.TEMPORARY))
+    provider = BedrockProgressionProvider(
+        Settings(_env_file=None, bedrock_api_key="test"),
+        client=cast(BedrockConverseClient, client),
     )
 
     with pytest.raises(ApplicationError) as raised:
@@ -131,14 +123,6 @@ def test_contract_accepts_only_controlled_codes_and_false_quality_certainty() ->
         ProgressionAnalysis.model_validate(
             {**base, "trend": "worsening", "recommendations": ["Spray 2 ml per litre."]}
         )
-    accepted = ProgressionAnalysis.model_validate(
-        {
-            **base,
-            "trend": "worsening",
-            "recommendations": ["consult_local_expert_if_worsening"],
-        }
-    )
-    assert accepted.recommendations
     with pytest.raises(ValidationError):
         ProgressionAnalysis.model_validate(
             {
@@ -149,9 +133,15 @@ def test_contract_accepts_only_controlled_codes_and_false_quality_certainty() ->
         )
 
 
-def test_settings_reject_unapproved_progression_model() -> None:
-    with pytest.raises(ValidationError):
-        Settings(_env_file=None, openai_progression_model="unapproved-model")
+def _response(value: dict[str, Any]) -> BedrockResponse:
+    return BedrockResponse(
+        payload={
+            "output": {"message": {"content": [{"text": json.dumps(value)}]}},
+            "usage": {},
+        },
+        request_id="progression-request",
+        request_count=1,
+    )
 
 
 def _request() -> ProgressionRequest:

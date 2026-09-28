@@ -207,7 +207,7 @@ class RecordingMemoryWriter(ScopedMemoryWriter):
 
 
 @pytest.mark.asyncio
-async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
+async def test_general_and_plot_chats_use_distinct_context_and_configured_model() -> None:
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -320,8 +320,8 @@ async def test_general_and_plot_chats_use_distinct_context_and_models() -> None:
     ]
     general_request, general_model = guidance_requests[0]
     plot_request, plot_model = guidance_requests[1]
-    assert general_model == "gpt-5-mini"
-    assert plot_model == "gpt-5"
+    assert general_model == "global.anthropic.claude-sonnet-4-6"
+    assert plot_model == "global.anthropic.claude-sonnet-4-6"
     general_input = json.loads(general_request.input_text)
     plot_input = json.loads(plot_request.input_text)
     assert general_input["verified_context"] == []

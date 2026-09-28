@@ -1,7 +1,6 @@
 """Startup dependency container and provider/plugin bindings."""
 
 from app.core.config import Settings
-from app.integrations.audio.openai_audio import OpenAIAudioProvider
 from app.integrations.audio.provider import AudioProvider, UnavailableAudioProvider
 from app.integrations.auth.accounts import AccountAuthProvider, UnavailableAccountAuthProvider
 from app.integrations.auth.cognito import CognitoAuthProvider
@@ -9,23 +8,22 @@ from app.integrations.auth.cognito_accounts import CognitoAccountAuthProvider
 from app.integrations.auth.provider import AuthProvider, UnavailableAuthProvider
 from app.integrations.geocoding.open_meteo import OpenMeteoGeocodingProvider
 from app.integrations.geocoding.provider import GeocodingProvider
-from app.integrations.inference.openai_vision import OpenAILeafInferenceProvider
 from app.integrations.inference.provider import (
     LeafInferenceProvider,
     UnavailableLeafInferenceProvider,
 )
-from app.integrations.llm.openai_responses import OpenAIResponsesProvider
+from app.integrations.llm.bedrock_converse import BedrockConverseProvider
 from app.integrations.llm.provider import LLMProvider, UnavailableLLMProvider
 from app.integrations.memory.mem0 import Mem0MemoryProvider
 from app.integrations.memory.provider import MemoryProvider, UnavailableMemoryProvider
-from app.integrations.progression.openai_responses import OpenAIProgressionProvider
+from app.integrations.progression.bedrock_converse import BedrockProgressionProvider
 from app.integrations.progression.provider import (
     ProgressionProvider,
     UnavailableProgressionProvider,
 )
+from app.integrations.storage.cloudinary import CloudinaryObjectStorage
 from app.integrations.storage.local import LocalObjectStorage
 from app.integrations.storage.provider import ObjectStorageProvider
-from app.integrations.storage.s3 import S3ObjectStorage
 from app.integrations.usage.provider import AIUsageSink
 from app.integrations.weather.open_meteo import OpenMeteoForecastProvider
 from app.integrations.weather.openweather import (
@@ -50,25 +48,24 @@ def build_account_auth_provider(settings: Settings) -> AccountAuthProvider:
 
 
 def build_object_storage(settings: Settings) -> ObjectStorageProvider:
-    """Select local development storage or private production S3."""
+    """Select local development storage or private production Cloudinary."""
 
-    if settings.storage_backend == "s3":
-        return S3ObjectStorage(settings)
+    if settings.storage_backend == "cloudinary":
+        return CloudinaryObjectStorage(settings)
     return LocalObjectStorage(settings.local_storage_path)
 
 
 def build_leaf_inference_provider(settings: Settings) -> LeafInferenceProvider:
-    """Select the temporary vision plugin without changing diagnosis orchestration."""
+    """Fail honestly until an evaluated classifier checkpoint is supplied."""
 
-    if settings.leaf_inference_backend == "openai_vision" and settings.openai_api_key:
-        return OpenAILeafInferenceProvider(settings)
+    del settings
     return UnavailableLeafInferenceProvider()
 
 
 def build_llm_provider(settings: Settings, usage_sink: AIUsageSink | None = None) -> LLMProvider:
-    if not settings.openai_api_key:
+    if not settings.bedrock_configured:
         return UnavailableLLMProvider()
-    return OpenAIResponsesProvider(settings, usage_sink=usage_sink)
+    return BedrockConverseProvider(settings, usage_sink=usage_sink)
 
 
 def build_memory_provider(settings: Settings) -> MemoryProvider:
@@ -78,19 +75,18 @@ def build_memory_provider(settings: Settings) -> MemoryProvider:
 
 
 def build_progression_provider(settings: Settings) -> ProgressionProvider:
-    """Bind visual comparison only when the shared OpenAI credential exists."""
+    """Bind visual comparison only when Bedrock is configured."""
 
-    if not settings.openai_api_key:
+    if not settings.bedrock_configured:
         return UnavailableProgressionProvider()
-    return OpenAIProgressionProvider(settings)
+    return BedrockProgressionProvider(settings)
 
 
 def build_audio_provider(settings: Settings) -> AudioProvider:
-    """Bind request-based speech only when the shared server credential exists."""
+    """Voice remains unavailable until an approved speech provider is configured."""
 
-    if not settings.openai_api_key:
-        return UnavailableAudioProvider()
-    return OpenAIAudioProvider(settings)
+    del settings
+    return UnavailableAudioProvider()
 
 
 def build_current_weather_provider(settings: Settings) -> CurrentWeatherProvider:

@@ -25,15 +25,14 @@ class LLMRouter:
     """Map typed tasks to configuration-owned model policies."""
 
     def __init__(self, provider: LLMProvider, settings: Settings) -> None:
-        light = ModelPolicy(settings.openai_light_model)
-        primary = ModelPolicy(settings.openai_primary_model)
+        configured = ModelPolicy(settings.bedrock_model_id)
         self._provider = provider
         self._policies = {
-            LLMTask.TITLE: light,
-            LLMTask.ROUTING: light,
-            LLMTask.EXTRACTION: light,
-            LLMTask.ROUTINE_CHAT: light,
-            LLMTask.AGRICULTURAL_GUIDANCE: primary,
+            LLMTask.TITLE: configured,
+            LLMTask.ROUTING: configured,
+            LLMTask.EXTRACTION: configured,
+            LLMTask.ROUTINE_CHAT: configured,
+            LLMTask.AGRICULTURAL_GUIDANCE: configured,
         }
 
     async def respond(self, request: LLMRequest) -> LLMResult:

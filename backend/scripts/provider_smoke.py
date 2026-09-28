@@ -2,15 +2,20 @@
 
 import asyncio
 import json
+from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from uuid import UUID
 
 import httpx
+from PIL import Image, ImageDraw
 
 from app.core.config import get_settings
-from app.integrations.llm.openai_responses import OpenAIResponsesProvider
+from app.integrations.llm.bedrock_converse import BedrockConverseProvider
 from app.integrations.llm.provider import LLMRequest, LLMTask
 from app.integrations.memory.mem0 import Mem0MemoryProvider
 from app.integrations.memory.provider import MemoryScope, MemoryScopeType
+from app.integrations.progression.bedrock_converse import BedrockProgressionProvider
+from app.integrations.progression.provider import ProgressionImage, ProgressionRequest
 from app.integrations.weather.openweather import OpenWeatherCurrentProvider
 
 FARMER_ID = UUID("00000000-0000-0000-0000-000000000001")
@@ -20,7 +25,7 @@ SCOPE_ID = UUID("00000000-0000-0000-0000-000000000002")
 async def _check_cognito() -> dict[str, object]:
     settings = get_settings()
     issuer = (
-        f"https://cognito-idp.{settings.aws_region}.amazonaws.com/"
+        f"https://cognito-idp.{settings.cognito_region}.amazonaws.com/"
         f"{settings.cognito_user_pool_id}"
     )
     async with httpx.AsyncClient(timeout=settings.external_request_timeout_seconds) as client:
@@ -28,7 +33,7 @@ async def _check_cognito() -> dict[str, object]:
         jwks.raise_for_status()
         keys = jwks.json().get("keys", [])
         probe = await client.post(
-            f"https://cognito-idp.{settings.aws_region}.amazonaws.com/",
+            f"https://cognito-idp.{settings.cognito_region}.amazonaws.com/",
             headers={
                 "Content-Type": "application/x-amz-json-1.1",
                 "X-Amz-Target": "AWSCognitoIdentityProviderService.InitiateAuth",
@@ -73,9 +78,9 @@ async def _check_mem0() -> dict[str, object]:
     return {"reachable": True, "result_count": len(result)}
 
 
-async def _check_openai() -> dict[str, object]:
+async def _check_bedrock() -> dict[str, object]:
     settings = get_settings()
-    provider = OpenAIResponsesProvider(settings)
+    provider = BedrockConverseProvider(settings)
     try:
         routing = await provider.classify_chat_risk(
             content=json.dumps(
@@ -87,7 +92,7 @@ async def _check_openai() -> dict[str, object]:
                 }
             ),
             farmer_id=FARMER_ID,
-            model=settings.openai_light_model,
+            model=settings.bedrock_model_id,
         )
         response = await provider.respond(
             LLMRequest(
@@ -99,14 +104,60 @@ async def _check_openai() -> dict[str, object]:
                 input_text="What information should I include when asking about a crop problem?",
                 farmer_id=FARMER_ID,
             ),
-            model=settings.openai_light_model,
+            model=settings.bedrock_model_id,
         )
         return {
-            "routing_model": settings.openai_light_model,
+            "routing_model": settings.bedrock_model_id,
             "requires_primary_model": routing.requires_primary_model,
             "response_model": response.model,
             "short_answer": response.reply.short_answer,
             "follow_up_question_count": len(response.reply.follow_up_questions),
+        }
+    finally:
+        await provider.close()
+
+
+def _test_leaf_image(*, affected_radius: int) -> bytes:
+    image = Image.new("RGB", (256, 256), (50, 130, 55))
+    ImageDraw.Draw(image).ellipse(
+        (
+            128 - affected_radius,
+            128 - affected_radius,
+            128 + affected_radius,
+            128 + affected_radius,
+        ),
+        fill=(115, 70, 30),
+    )
+    output = BytesIO()
+    image.save(output, format="JPEG", quality=90)
+    return output.getvalue()
+
+
+async def _check_bedrock_progression() -> dict[str, object]:
+    provider = BedrockProgressionProvider(get_settings())
+    captured = datetime.now(tz=UTC)
+    try:
+        result = await provider.compare(
+            ProgressionRequest(
+                farmer_id=FARMER_ID,
+                earlier_images=(
+                    ProgressionImage(UUID(int=10), _test_leaf_image(affected_radius=54), captured),
+                ),
+                later_images=(
+                    ProgressionImage(
+                        UUID(int=11),
+                        _test_leaf_image(affected_radius=30),
+                        captured + timedelta(days=3),
+                    ),
+                ),
+                response_language="en",
+            )
+        )
+        return {
+            "model": result.model,
+            "trend": result.analysis.trend,
+            "confidence": result.analysis.confidence,
+            "scope": "visible_symptom_progression_only",
         }
     finally:
         await provider.close()
@@ -117,7 +168,8 @@ async def main() -> None:
         "cognito": _check_cognito,
         "openweather": _check_weather,
         "mem0": _check_mem0,
-        "openai": _check_openai,
+        "bedrock": _check_bedrock,
+        "bedrock_progression": _check_bedrock_progression,
     }
     results: dict[str, object] = {}
     for name, check in checks.items():

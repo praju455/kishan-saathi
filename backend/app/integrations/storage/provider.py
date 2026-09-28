@@ -15,7 +15,7 @@ class StoredObject:
 
 
 class ObjectStorageProvider(Protocol):
-    """Storage operations that avoid exposing filesystem or S3 details."""
+    """Storage operations that avoid exposing filesystem or provider details."""
 
     async def put_private_image(
         self,

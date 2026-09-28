@@ -1,9 +1,6 @@
 """Transaction-isolated, backend-owned plot forecast tool."""
 
-from typing import Protocol
 from uuid import UUID
-
-from pydantic import BaseModel
 
 from app.core.config import Settings
 from app.database.session import DatabasePort
@@ -12,17 +9,6 @@ from app.modules.farms.repository import FarmRepository
 from app.modules.weather.repository import WeatherRepository
 from app.modules.weather.schemas import CurrentWeatherResponse, PlotForecastResponse
 from app.modules.weather.service import WeatherService
-
-
-class PlotWeatherContext(BaseModel):
-    current: CurrentWeatherResponse
-    forecast: PlotForecastResponse
-
-
-class PlotWeatherTool(Protocol):
-    async def current(self, farmer_id: UUID, plot_id: UUID) -> CurrentWeatherResponse: ...
-
-    async def forecast(self, farmer_id: UUID, plot_id: UUID) -> PlotForecastResponse: ...
 
 
 class DatabasePlotWeatherTool:

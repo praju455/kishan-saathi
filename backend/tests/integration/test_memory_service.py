@@ -233,7 +233,7 @@ async def test_general_chat_is_filtered_deduplicated_and_connected_once() -> Non
 
     assert len(connected.memories) == 1
     assert connected.memories[0].index_status == "indexed"
-    assert llm.requests[0][1] == "gpt-5-mini"
+    assert llm.requests[0][1] == "global.anthropic.claude-sonnet-4-6"
     assert "assistant: You could inspect it tomorrow." in llm.requests[0][0].transcript
     assert provider.adds[0][0].scope_id == plot.id
     assert provider.adds[0][1] == ("I planted tomato in June",)

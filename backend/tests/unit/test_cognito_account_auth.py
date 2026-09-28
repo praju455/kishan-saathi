@@ -14,7 +14,7 @@ def _settings() -> Settings:
     return Settings(
         _env_file=None,
         app_env="test",
-        aws_region="ap-south-1",
+        cognito_region="ap-south-1",
         cognito_user_pool_id="ap-south-1_test",
         cognito_app_client_id="client-id",
     )
@@ -24,16 +24,12 @@ def _settings() -> Settings:
 async def test_sign_up_sends_the_backend_validated_farmer_name() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         payload = json.loads(request.read())
-        assert {"Name": "name", "Value": "Nikhil Kumar"} in payload[
-            "UserAttributes"
-        ]
+        assert {"Name": "name", "Value": "Nikhil Kumar"} in payload["UserAttributes"]
         return httpx.Response(200, json={"UserConfirmed": False})
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = CognitoAccountAuthProvider(_settings(), http_client=client)
-        confirmed = await provider.sign_up(
-            "Nikhil Kumar", "farmer@example.com", "valid-password"
-        )
+        confirmed = await provider.sign_up("Nikhil Kumar", "farmer@example.com", "valid-password")
 
     assert confirmed is False
 
@@ -74,9 +70,7 @@ async def test_sign_in_maps_tokens_without_leaking_provider_shape() -> None:
         ("LimitExceededException", "AUTH_RATE_LIMITED"),
     ],
 )
-async def test_provider_failures_are_normalized(
-    provider_code: str, expected: str
-) -> None:
+async def test_provider_failures_are_normalized(provider_code: str, expected: str) -> None:
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(400, json={"__type": provider_code, "message": "secret"})
 
@@ -96,9 +90,7 @@ async def test_protocol_error_is_provider_unreachable() -> None:
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
         provider = CognitoAccountAuthProvider(_settings(), http_client=client)
         with pytest.raises(ApplicationError) as raised:
-            await provider.sign_up(
-                "Nikhil Kumar", "farmer@example.com", "valid-password"
-            )
+            await provider.sign_up("Nikhil Kumar", "farmer@example.com", "valid-password")
 
     assert raised.value.code == "AUTH_PROVIDER_UNREACHABLE"
 

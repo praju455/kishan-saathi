@@ -41,15 +41,15 @@ class HealthService:
 
         configured = {
             "authentication": self._settings.cognito_configured,
-            "llm": bool(self._settings.openai_api_key),
+            "llm": self._settings.bedrock_configured,
             "memory": bool(self._settings.mem0_api_key),
             "current_weather": self._settings.openweather_configured,
             "leaf_inference": self._leaf_inference_available,
             "object_storage": (
-                self._settings.storage_backend == "local"
-                or bool(self._settings.s3_bucket and self._settings.s3_expected_bucket_owner)
+                self._settings.storage_backend == "local" or self._settings.cloudinary_configured
             ),
         }
+        required = {key: value for key, value in configured.items() if key != "leaf_inference"}
         checks = {
             name: DependencyCheck(
                 status=DependencyStatus.UP if available else DependencyStatus.DOWN
@@ -77,7 +77,7 @@ class HealthService:
             "database": DependencyCheck(status=DependencyStatus.UP),
             **checks,
         }
-        if self._settings.app_env in {"staging", "production"} and not all(configured.values()):
+        if self._settings.app_env in {"staging", "production"} and not all(required.values()):
             return HealthResponse(
                 status=HealthStatus.NOT_READY,
                 service=self._settings.app_name,

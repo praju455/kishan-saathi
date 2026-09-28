@@ -24,7 +24,7 @@ class CognitoAuthProvider:
         *,
         http_client: httpx.AsyncClient | None = None,
     ) -> None:
-        self._region = settings.aws_region
+        self._region = settings.cognito_region
         self._pool_id = settings.cognito_user_pool_id
         self._client_id = settings.cognito_app_client_id
         self._issuer = f"https://cognito-idp.{self._region}.amazonaws.com/{self._pool_id}"

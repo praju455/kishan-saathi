@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,30 +29,22 @@ class Settings(BaseSettings):
     database_pool_size: int = Field(default=10, ge=1, le=100)
     database_max_overflow: int = Field(default=10, ge=0, le=100)
 
-    aws_region: str = "ap-south-1"
+    cognito_region: str = ""
     cognito_user_pool_id: str = ""
     cognito_app_client_id: str = ""
     cognito_jwks_cache_seconds: int = Field(default=3600, ge=60, le=86400)
     cognito_jwks_min_refresh_seconds: int = Field(default=60, ge=10, le=3600)
     cognito_jwks_max_bytes: int = Field(default=256 * 1024, ge=1024, le=1024 * 1024)
     external_request_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
-    openai_request_timeout_seconds: float = Field(default=45.0, gt=5, le=120)
-
-    openai_api_key: str = ""
-    openai_primary_model: Literal["gpt-5"] = "gpt-5"
-    openai_light_model: Literal["gpt-5-mini"] = "gpt-5-mini"
-    leaf_inference_backend: Literal["disabled", "openai_vision"] = "openai_vision"
-    openai_leaf_model: Literal["gpt-5", "gpt-5-mini"] = "gpt-5"
-    openai_leaf_confidence_cap: float = Field(default=0.74, ge=0.1, lt=0.75)
-    openai_progression_model: Literal["gpt-5", "gpt-5-mini"] = "gpt-5"
-    openai_transcription_model: Literal["gpt-4o-mini-transcribe", "gpt-4o-transcribe"] = (
-        "gpt-4o-mini-transcribe"
-    )
-    openai_speech_model: Literal["tts-1", "tts-1-hd"] = "tts-1"
-    openai_speech_voice: Literal[
-        "alloy", "ash", "coral", "echo", "fable", "onyx", "nova", "sage", "shimmer"
-    ] = "coral"
-    openai_audio_timeout_seconds: float = Field(default=45.0, gt=5, le=120)
+    bedrock_api_key: SecretStr = SecretStr("")
+    bedrock_model_id: str = "global.anthropic.claude-sonnet-4-6"
+    bedrock_region: str = "ap-south-1"
+    # Bedrock can spend several minutes compiling a new structured-output
+    # grammar. Chat work is queued, so allow that cold path while retaining a
+    # strict upper bound.
+    bedrock_request_timeout_seconds: float = Field(default=300.0, gt=5, le=600)
+    bedrock_max_retries: int = Field(default=2, ge=0, le=5)
+    leaf_inference_backend: Literal["disabled"] = "disabled"
     voice_max_audio_bytes: int = Field(default=10 * 1024 * 1024, ge=1024, le=25 * 1024 * 1024)
     voice_max_transcript_characters: int = Field(default=4000, ge=100, le=12000)
     voice_max_speech_characters: int = Field(default=12000, ge=100, le=20000)
@@ -74,8 +66,8 @@ class Settings(BaseSettings):
     chat_turn_interval_seconds: float = Field(default=0.5, ge=0.1, le=30)
     chat_turn_batch_size: int = Field(default=10, ge=1, le=50)
     chat_turn_max_attempts: int = Field(default=3, ge=1, le=10)
-    chat_turn_lease_seconds: int = Field(default=180, ge=30, le=900)
-    chat_turn_processing_timeout_seconds: int = Field(default=120, ge=10, le=840)
+    chat_turn_lease_seconds: int = Field(default=840, ge=30, le=900)
+    chat_turn_processing_timeout_seconds: int = Field(default=780, ge=10, le=840)
     chat_turn_backoff_base_seconds: int = Field(default=2, ge=1, le=60)
     chat_turn_backoff_max_seconds: int = Field(default=30, ge=1, le=300)
     chat_max_pending_turns: int = Field(default=20, ge=1, le=100)
@@ -87,13 +79,12 @@ class Settings(BaseSettings):
     weather_cache_seconds: int = Field(default=3600, ge=300, le=21600)
     weather_max_stale_seconds: int = Field(default=21600, ge=3600, le=86400)
 
-    storage_backend: Literal["local", "s3"] = "local"
+    storage_backend: Literal["local", "cloudinary"] = "local"
     local_storage_path: str = "./storage"
-    s3_bucket: str = ""
-    s3_key_prefix: str = "private"
-    s3_kms_key_id: str = ""
-    s3_expected_bucket_owner: str = ""
-    s3_endpoint_url: str = ""
+    cloudinary_cloud_name: str = ""
+    cloudinary_api_key: SecretStr = SecretStr("")
+    cloudinary_api_secret: SecretStr = SecretStr("")
+    cloudinary_folder: str = "kishan-saathi-private"
     max_image_bytes: int = Field(default=10 * 1024 * 1024, ge=1024, le=50 * 1024 * 1024)
     max_diagnosis_upload_bytes: int = Field(
         default=50 * 1024 * 1024,
@@ -122,19 +113,42 @@ class Settings(BaseSettings):
     progression_history_scan_limit: int = Field(default=20, ge=2, le=100)
     progression_min_image_dimension: int = Field(default=160, ge=32, le=1024)
     progression_min_image_quality_score: float = Field(default=0.45, ge=0, le=1)
+    cors_allowed_origins: list[str] = Field(default_factory=list)
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def normalize_database_url(cls, value: object) -> object:
+        """Accept Supabase dashboard URLs while always using the asyncpg dialect."""
+
+        if not isinstance(value, str):
+            return value
+        normalized = value.strip()
+        if normalized.startswith("postgres://"):
+            normalized = "postgresql+asyncpg://" + normalized.removeprefix("postgres://")
+        elif normalized.startswith("postgresql://"):
+            normalized = "postgresql+asyncpg://" + normalized.removeprefix("postgresql://")
+        if "sslmode=" in normalized:
+            normalized = normalized.replace("sslmode=", "ssl=")
+        return normalized
 
     @model_validator(mode="after")
     def validate_chat_turn_timing(self) -> "Settings":
         if self.chat_turn_processing_timeout_seconds >= self.chat_turn_lease_seconds:
             raise ValueError("CHAT_TURN_TIMEOUT_MUST_BE_SHORTER_THAN_LEASE")
-        if self.storage_backend == "s3" and not self.s3_bucket.strip():
-            raise ValueError("S3_BUCKET_REQUIRED")
-        if not self.s3_key_prefix.replace("-", "").replace("_", "").isalnum():
-            raise ValueError("S3_KEY_PREFIX_INVALID")
-        if self.s3_expected_bucket_owner and not (
-            self.s3_expected_bucket_owner.isdigit() and len(self.s3_expected_bucket_owner) == 12
-        ):
-            raise ValueError("S3_EXPECTED_BUCKET_OWNER_INVALID")
+        if not self.cognito_region and self.cognito_user_pool_id:
+            self.cognito_region = self.cognito_user_pool_id.partition("_")[0]
+        if self.cognito_user_pool_id and not self.cognito_region:
+            raise ValueError("COGNITO_REGION_REQUIRED")
+        if not self.bedrock_model_id.strip():
+            raise ValueError("BEDROCK_MODEL_ID_REQUIRED")
+        if not self.bedrock_region.strip():
+            raise ValueError("BEDROCK_REGION_REQUIRED")
+        if self.storage_backend == "cloudinary" and not self.cloudinary_configured:
+            raise ValueError("CLOUDINARY_CONFIGURATION_REQUIRED")
+        if not self.cloudinary_folder.replace("-", "").replace("_", "").isalnum():
+            raise ValueError("CLOUDINARY_FOLDER_INVALID")
+        if any(origin == "*" for origin in self.cors_allowed_origins):
+            raise ValueError("CORS_WILDCARD_FORBIDDEN")
         if self.app_env == "production":
             if self.debug:
                 raise ValueError("PRODUCTION_DEBUG_FORBIDDEN")
@@ -142,20 +156,14 @@ class Settings(BaseSettings):
             uses_tls = "ssl=" in database_url or "sslmode=" in database_url
             if "localhost" in database_url or not uses_tls:
                 raise ValueError("PRODUCTION_DATABASE_TLS_REQUIRED")
-            if self.storage_backend != "s3":
-                raise ValueError("PRODUCTION_REQUIRES_S3_STORAGE")
-            if not self.s3_expected_bucket_owner:
-                raise ValueError("PRODUCTION_REQUIRES_S3_BUCKET_OWNER")
-            if self.s3_endpoint_url:
-                raise ValueError("PRODUCTION_S3_ENDPOINT_OVERRIDE_FORBIDDEN")
+            if self.storage_backend != "cloudinary" or not self.cloudinary_configured:
+                raise ValueError("PRODUCTION_REQUIRES_CLOUDINARY_STORAGE")
             if not self.cognito_configured:
                 raise ValueError("PRODUCTION_REQUIRES_COGNITO")
             if len(self.auth_rate_limit_hmac_key.get_secret_value()) < 32:
                 raise ValueError("PRODUCTION_REQUIRES_AUTH_RATE_LIMIT_HMAC_KEY")
-            if not self.openai_api_key.strip():
-                raise ValueError("PRODUCTION_REQUIRES_OPENAI")
-            if self.leaf_inference_backend == "disabled":
-                raise ValueError("PRODUCTION_REQUIRES_LEAF_INFERENCE")
+            if not self.bedrock_configured:
+                raise ValueError("PRODUCTION_REQUIRES_BEDROCK")
             if not self.openweather_configured:
                 raise ValueError("PRODUCTION_REQUIRES_OPENWEATHER")
             if not self.mem0_api_key.strip():
@@ -164,7 +172,21 @@ class Settings(BaseSettings):
 
     @property
     def cognito_configured(self) -> bool:
-        return bool(self.cognito_user_pool_id and self.cognito_app_client_id)
+        return bool(
+            self.cognito_region and self.cognito_user_pool_id and self.cognito_app_client_id
+        )
+
+    @property
+    def bedrock_configured(self) -> bool:
+        return bool(self.bedrock_api_key.get_secret_value().strip())
+
+    @property
+    def cloudinary_configured(self) -> bool:
+        return bool(
+            self.cloudinary_cloud_name.strip()
+            and self.cloudinary_api_key.get_secret_value().strip()
+            and self.cloudinary_api_secret.get_secret_value().strip()
+        )
 
     @property
     def openweather_configured(self) -> bool:

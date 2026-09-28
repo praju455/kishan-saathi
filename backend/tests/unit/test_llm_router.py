@@ -67,7 +67,12 @@ async def test_router_uses_mini_for_titles_and_primary_for_guidance() -> None:
     title = await router.generate_title(content="tomato spots", language="hi", farmer_id=farmer_id)
     classification = await router.classify_chat_risk(content="hello", farmer_id=farmer_id)
 
-    assert provider.models == ["gpt-5-mini", "gpt-5", "gpt-5-mini", "gpt-5-mini"]
+    assert provider.models == [
+        "global.anthropic.claude-sonnet-4-6",
+        "global.anthropic.claude-sonnet-4-6",
+        "global.anthropic.claude-sonnet-4-6",
+        "global.anthropic.claude-sonnet-4-6",
+    ]
     assert title.title == "Generated title"
     assert classification.requires_primary_model is False
 

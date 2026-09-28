@@ -1,99 +1,133 @@
 # Kishan Saathi Backend
 
-Runnable FastAPI foundation for the Kishan Saathi farmer-assistance backend.
+Production-oriented FastAPI backend for an authenticated farmer-assistance mobile app.
 
-Module boundaries:
+## Architecture
 
-- `api`: top-level API composition and versioning.
-- `core`: configuration, dependency wiring, errors, logging, and security.
-- `database`: SQLAlchemy session and declarative model foundation.
-- `integrations`: replaceable provider/plugin contracts and adapters.
-- `modules`: self-contained product features.
-- `migrations`: Alembic database migrations.
-- `tests`: unit, integration, and API contract tests.
+The backend uses Python 3.12, FastAPI, SQLAlchemy, Alembic, and `uv`. Product modules own
+their routes, schemas, services, repositories, and models. External providers sit behind typed
+integration boundaries:
+
+- Amazon Cognito validates access tokens and manages the account lifecycle.
+- Amazon Bedrock Converse generates structured chat replies, titles, routing decisions,
+  canonical-memory candidates, and non-diagnostic progression comparisons.
+- Supabase PostgreSQL stores profiles, farms, plots, crop cycles, diagnoses, chat history,
+  reminders, weather snapshots, memory records, activity timelines, reports, cleanup jobs, and
+  provider-usage events.
+- Cloudinary stores authenticated, owner-scoped diagnosis and activity images.
+- OpenWeather supplies current conditions; Open-Meteo supplies forecasts and geocoding.
+- Mem0 indexes canonical facts that remain anchored to PostgreSQL records.
+
+Chat and weather have independent routers, services, repositories, and providers. Plot-scoped
+chat receives weather only through the narrow `PlotWeatherPort`; the chat service does not import
+the weather module.
 
 ## Local setup
 
-```powershell
+```bash
+cd backend
 uv sync --group dev
-Copy-Item .env.example .env
+cp .env.example .env
 docker compose up -d postgres
+uv run alembic upgrade head
 uv run uvicorn app.main:app --reload
 ```
 
-The API exposes:
+The API exposes OpenAPI at `/docs`, liveness at `/health/live`, and database-backed readiness at
+`/health/ready`. Product endpoints are under `/api/v1`.
 
-- `GET /health/live` for process liveness without dependency calls.
-- `GET /health/ready` for PostgreSQL readiness using a bounded `SELECT 1`.
-- `GET /docs` for the generated OpenAPI interface.
-- Authenticated farm, plot, crop-cycle, diagnosis, chat, memory, reminder,
-  weather, location-search, history, activity-photo, voice, and report APIs under
-  `/api/v1`.
+## Required production configuration
 
-Saathi voice uses bounded request-based audio. The mobile app records a temporary
-message, the authenticated backend transcribes it, and the farmer reviews the
-transcript before sending it through the normal durable chat queue. Typed and
-spoken questions therefore use the same owner-scoped history, farm/plot/scan
-context, memory, tools, and safety validation. Read-aloud is generated only from
-an existing owned assistant message; arbitrary client-authored text cannot use the
-speech endpoint. Recordings and synthesized speech are not persisted by the backend.
+| Area | Variables |
+| --- | --- |
+| App | `APP_ENV=production`, `DEBUG=false`, `AUTH_RATE_LIMIT_HMAC_KEY` |
+| Database | `DATABASE_URL` with TLS, pool size and timeout settings |
+| Cognito | `COGNITO_REGION`, `COGNITO_USER_POOL_ID`, `COGNITO_APP_CLIENT_ID` |
+| Bedrock | `BEDROCK_API_KEY`, `BEDROCK_MODEL_ID`, `BEDROCK_REGION` |
+| Cloudinary | `STORAGE_BACKEND=cloudinary`, `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET` |
+| Weather | `OPENWEATHER_API_KEY`; Open-Meteo needs no key for the configured APIs |
+| Memory | `MEM0_API_KEY` |
+| Web clients | `CORS_ALLOWED_ORIGINS` as a JSON array; keep `[]` for native-mobile-only access |
 
-`POST /api/v1/diagnoses/{case_id}/progression` compares the latest two stored
-retake batches by default, or two explicitly selected assessment IDs. It uses
-OpenAI image input only to estimate visible symptom change (`improving`,
-`worsening`, `unchanged`, or `unclear`). It does not receive or produce disease
-labels. It may read the backend classifier result as immutable context, but it
-cannot alter or replace that result. Owner checks, image-quality
-gates, bounded image counts/bytes, typed output validation, and `store=false`
-are enforced before a response is returned.
+See [.env.example](.env.example) for every setting and safe defaults. Never commit a populated
+`.env` file.
 
-Chat sends use durable ordered turns. `POST /api/v1/chats/{chat_id}/messages`
-returns `202` with a queued turn, while the background worker processes only
-the earliest turn in each chat. Different chats can run concurrently. Clients
-poll `GET /api/v1/chats/{chat_id}/turns/{turn_id}` and may explicitly retry a
-terminal failed turn with `POST .../{turn_id}/retry`; the same idempotency key
-never creates a duplicate farmer message or paid LLM call. Assistant content is
-stored both as natural farmer-facing text and as the validated structured reply
-used by the mobile UI.
+### Supabase PostgreSQL
 
-Run checks with:
+Render does not provide IPv6 database egress, so use the Supabase shared **session pooler** URL on
+port `5432`, append `sslmode=require`, and store it as Render's `DATABASE_URL` secret. Settings
+normalize Supabase's `postgres://` or `postgresql://` scheme to SQLAlchemy's asyncpg dialect and
+translate `sslmode` to the asyncpg `ssl` parameter.
 
-```powershell
-uv run ruff check app tests
-uv run mypy app
-uv run pytest
+Alembic remains the schema authority:
+
+```bash
+DATABASE_URL='postgresql://postgres.PROJECT_REF:ENCODED_PASSWORD@POOLER:5432/postgres?sslmode=require' \
+  uv run alembic upgrade head
 ```
 
-Leaf inference is selected through `LEAF_INFERENCE_BACKEND`. The temporary
-`openai_vision` plugin keeps output inside the immutable 89-class PlantWild
-manifest, preserves per-image evidence, uses `store=false`, and caps confidence
-below the application's high-confidence threshold because it has not been
-calibrated on the held-out test set. Set the backend to `disabled` to return
-`LEAF_MODEL_NOT_CONFIGURED`. The evaluated DINOv2/ConvNeXt adapter will replace
-this plugin without changing the diagnosis API or lifecycle. Specific chemical
-treatment instructions are intentionally blocked without an approved
-authoritative source.
+The mobile app must not connect to these tables with the database password. Keep Supabase Data
+API access denied unless explicit RLS policies are designed and tested later.
 
-## Private image storage
+### Amazon Cognito
 
-Development and Docker testing use `STORAGE_BACKEND=local`. Production fails
-closed unless `STORAGE_BACKEND=s3`, `S3_BUCKET`, and the 12-digit
-`S3_EXPECTED_BUCKET_OWNER` are configured. The API uses its AWS workload role;
-static AWS access keys do not belong in `.env`.
+The Cognito and Bedrock regions are intentionally separate. The configured user pool region is
+used to build and verify the exact issuer, JWKS URL, token expiry, `token_use`, and app-client
+binding. The app client must enable the password and refresh-token flows used by the auth routes.
 
-The S3 adapter:
+### Amazon Bedrock
 
-- creates opaque keys beneath `S3_KEY_PREFIX/<farmer-id>/<category>/` and checks
-  that owner prefix on every read and delete;
-- never creates a public URL or object ACL;
-- requests SHA-256 checksums, `private, no-store`, and server-side encryption;
-- supports SSE-S3 by default or SSE-KMS when `S3_KMS_KEY_ID` is supplied;
-- uses `ExpectedBucketOwner` to prevent accidental cross-account bucket access;
-- preserves the durable deletion-job workflow for scans, activity photos, and
-  copied report images.
+The adapter calls the official Converse endpoint directly with a Bedrock API key. It uses
+validated JSON-schema outputs, bounded retries, a maximum four-step tool loop, deterministic
+Pydantic safety validation, a second structured safety review, and usage recording. Provider
+authentication, authorization, throttling, timeout, invalid-model, and malformed-response errors
+map to neutral application errors without exposing provider details.
 
-The bucket must have all S3 Block Public Access options enabled, Object Ownership
-set to Bucket owner enforced (ACLs disabled), TLS-only access, and a least-privilege
-workload-role policy limited to `GetObject`, `PutObject`, and `DeleteObject` under
-the configured prefix. Do not enable bucket versioning without extending privacy
-deletion to remove historical object versions.
+### Cloudinary
+
+Production images use Cloudinary's `authenticated` delivery type. Public IDs have the form
+`<folder>/<farmer-id>/<category>/<opaque-id>`. Every read and delete validates that owner prefix
+before network access. Reads use one-minute signed download URLs; deletes remain idempotent so the
+durable cleanup worker can retry safely.
+
+## Chat lifecycle
+
+Chats are owned by one authenticated farmer and may be general, farm, plot, or scan scoped.
+`POST /api/v1/chats/{chat_id}/messages` queues an ordered durable turn and returns `202`. Clients
+poll the turn endpoint. The worker stores both the user message and the structured assistant
+reply, preserves history, prevents duplicate paid calls with an idempotency key, and enforces
+ownership on list, read, update, retry, and delete operations.
+
+## Verification
+
+```bash
+uv sync --group dev
+uv run ruff check app tests scripts
+uv run mypy app tests scripts
+uv run pytest
+uv run alembic upgrade head --sql
+```
+
+Run configured provider probes with `uv run python -m scripts.provider_smoke` and the live LLM
+evaluation set with `uv run python -m scripts.llm_response_eval`. These scripts make real network
+requests and must only be run with rotated, non-committed credentials. AWS can spend several
+minutes compiling a newly seen structured-output schema, so the default Bedrock timeout allows a
+bounded five-minute cold path.
+
+## Render
+
+The repository root contains `render.yaml`. It builds the backend Docker image, runs Alembic as a
+pre-deploy command, starts Uvicorn on Render's assigned port, and checks `/health/ready`. Follow
+[the deployment runbook](docs/DEPLOYMENT.md) before creating the service.
+
+## Known limitations
+
+- Leaf classification remains deliberately disabled until an evaluated checkpoint, immutable
+  class manifest, and serving contract are supplied. Image uploads and diagnosis case history
+  still work, but classification returns `LEAF_MODEL_NOT_CONFIGURED` rather than invented results.
+- Exact chemical product, ingredient, dosage, mixing, frequency, and application instructions
+  remain blocked until an approved local authoritative source is configured.
+- Voice transcription and synthesis return `VOICE_PROVIDER_NOT_CONFIGURED`; the previous provider
+  was removed and no approved replacement credentials or contract were supplied.
+- A live deployment cannot be verified until Supabase, Cloudinary, OpenWeather, and Cognito app
+  client values are available. See the endpoint report for the precise verified/unverified split.
